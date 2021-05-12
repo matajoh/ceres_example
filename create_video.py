@@ -3,7 +3,7 @@ from collections import namedtuple
 import csv
 
 import matplotlib.pyplot as plt
-import matplotlib.animation as anim
+from matplotlib.animation import FuncAnimation
 import matplotlib.patches as patches
 import numpy as np
 
@@ -12,6 +12,7 @@ def _parse_args():
     parser = argparse.ArgumentParser("Fit Video")
     parser.add_argument("fit_path", help="Path to the fit CSV file")
     parser.add_argument("data_path", help="Path to the data CSV file")
+    parser.add_argument("mp4_path", help="Path to the output MP4 file")
     return parser.parse_args()
 
 
@@ -45,12 +46,32 @@ def _main():
                                     float(line["b"])))
 
     steps = np.arange(len(cost))
-    fig = plt.figure()
+    fig = plt.figure(figsize=(4, 8))
     ax = plt.subplot(211)
-    ax.plot(steps, cost)
+    ax.set_xlabel("Cost")
+    ax.set_ylabel("Step")
+    line, = ax.plot(steps, cost, 'r-')
     ax = plt.subplot(212)
-    ax.scatter(data[:, 0], data[:, 1])
-    ax.add_patch(ellipses[0].to_patch())
+    ax.set_xlim(-3, 5)
+    ax.set_ylim(-3, 5)
+    ax.scatter(data[::4, 0], data[::4, 1], marker='.')
+    ellipse = ellipses[0].to_patch()
+    ax.add_patch(ellipse)
+
+    def init():
+        line.set_data([], [])
+        return line, ellipse
+
+    def animate(i):
+        line.set_data(steps[:i + 1], cost[:i+1])
+        ellipse.set_center(np.array([ellipses[i].h, ellipses[i].k]))
+        ellipse.set_width(2 * ellipses[i].a)
+        ellipse.set_height(2 * ellipses[i].b)
+        return line, ellipse
+
+    anim = FuncAnimation(fig, animate, init_func=init,
+                              frames=len(cost), interval=100, blit=True)
+    anim.save(args.mp4_path, fps=12, extra_args=['-vcodec', 'libx264'])
     plt.show()
 
 

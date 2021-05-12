@@ -114,13 +114,13 @@ Eigen::Matrix2Xd create_dataset(int num_observations, const double *params)
     const double k = params[1];
     const double a = params[2];
     const double b = params[3];
-    Eigen::RowVectorXd angles = Eigen::RowVectorXd::LinSpaced(num_observations, 0, 1);
+    Eigen::RowVectorXd angles = Eigen::RowVectorXd::LinSpaced(num_observations, -0.5, 2);
     Eigen::Matrix2Xd data(2, num_observations);
     data.row(0) = (a * angles.array().cos()) + h;
     data.row(1) = (b * angles.array().sin()) + k;
     std::random_device rd{};
     std::mt19937 gen{rd()};
-    std::normal_distribution<> d{0, 0.001};
+    std::normal_distribution<> d{0, 0.05};
     for (auto i = 0; i < data.cols(); ++i)
     {
         data(0, i) += d(gen);
