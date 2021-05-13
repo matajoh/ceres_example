@@ -3,11 +3,91 @@
 #include <iostream>
 #include <random>
 #include <memory>
+#include <array>
 
 #include <Eigen/Core>
 #include <gflags/gflags.h>
 #include <ceres/ceres.h>
 #include <glog/logging.h>
+
+
+template<typename T>
+class Ellipse
+{
+public:
+    Ellipse() : Ellipse(0, 0, 1, 1)
+    {
+    }
+
+    explicit Ellipse(T h, T k, T a, T b)
+    {
+        m_data[0] = h;
+        m_data[1] = k;
+        m_data[2] = a;
+        m_data[3] = b;
+    }
+
+    explicit Ellipse(const T* data)
+    {
+        std::copy(data, data + 4, m_data.begin());
+    }
+
+    explicit Ellipse(const Ellipse& other) : Ellipse(other.params())
+    {        
+    }
+
+    Ellipse& operator= (const Ellipse &other)
+    {
+        std::copy(other.m_data.begin(), other.m_data.end(), m_data.begin());
+        return *this;
+    }
+
+    const T* params() const
+    {
+        return m_data.data();
+    }
+
+    T* params()
+    {
+        return m_data.data();
+    }
+
+    T h() const
+    {
+        return m_data[0];
+    } 
+
+    T k() const
+    {
+        return m_data[1];
+    }
+
+    T a() const
+    {
+        return m_data[2];
+    }
+
+    T b() const
+    {
+        return m_data[3];
+    }
+
+    void set_bounds(ceres::Problem& problem)
+    {
+        problem.SetParameterLowerBound(params(), 2, 1e-5);
+        problem.SetParameterLowerBound(params(), 3, 1e-5);
+    }
+
+    std::string to_string()
+    {
+        std::stringstream buff;
+        buff << "(h=" << h() << ", k=" << k() << ", a=" << a() << ", b=" << b() << ")";
+        return buff.str();
+    }
+
+private:
+    std::array<T, 4> m_data;
+};
 
 /** Sample functor which simply computes the residual.
  *  Used for numeric differentiation.
@@ -17,16 +97,14 @@ struct NumericEllipseCostFunctor
     NumericEllipseCostFunctor(const Eigen::Vector2d &observed_point) : observed_point(observed_point) {}
     bool operator()(const double *const parameters, double *residuals) const
     {
-        // extract Ellipse params
-        const double h = parameters[0];
-        const double k = parameters[1];
-        const double a = parameters[2];
-        const double b = parameters[3];
+        Ellipse<double> ellipse(parameters);
 
         // compute the cost
-        double dx = observed_point.x() - h;
-        double dy = observed_point.y() - k;
-        residuals[0] = (dx * dx) / (a * a) + (dy * dy) / (b * b) - 1;
+        const double dx = observed_point.x() - ellipse.h();
+        const double dy = observed_point.y() - ellipse.k();
+        const double a2 = ellipse.a() * ellipse.a();
+        const double b2 = ellipse.b() * ellipse.b();
+        residuals[0] = (dx * dx) / a2 + (dy * dy) / b2 - 1;
         return true;
     }
 
@@ -48,16 +126,13 @@ struct AutoEllipseCostFunctor
     template <typename T>
     bool operator()(const T *const parameters, T *residuals) const
     {
-        const T h = parameters[0];
-        const T k = parameters[1];
-        const T a = parameters[2];
-        const T b = parameters[3];
-        const T x = T(observed_point.x());
-        const T y = T(observed_point.y());
+        Ellipse<T> ellipse(parameters);
 
-        T dx = T(observed_point.x()) - h;
-        T dy = T(observed_point.y()) - k;
-        residuals[0] = (dx * dx) / (a * a) + (dy * dy) / (b * b) - T(1.0);
+        T dx = T(observed_point.x()) - ellipse.h();
+        T dy = T(observed_point.y()) - ellipse.k();
+        T a2 = ellipse.a() * ellipse.a();
+        T b2 = ellipse.b() * ellipse.b();
+        residuals[0] = (dx * dx) / a2 + (dy * dy) / b2 - T(1.0);
         return true;
     }
 
@@ -89,18 +164,15 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
      */
     virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
     {
-        const double h = parameters[0][0];
-        const double k = parameters[0][1];
-        const double a = parameters[0][2];
-        const double b = parameters[0][3];
+        Ellipse<double> ellipse(parameters[0]);
 
         // We can re-use all of these later
-        const double dx = observed_point.x() - h;
-        const double dy = observed_point.y() - k;
+        const double dx = observed_point.x() - ellipse.h();
+        const double dy = observed_point.y() - ellipse.k();
         const double dx2 = dx * dx;
         const double dy2 = dy * dy;
-        const double a2 = a * a;
-        const double b2 = b * b;
+        const double a2 = ellipse.a() * ellipse.a();
+        const double b2 = ellipse.b() * ellipse.b();
         residuals[0] = dx2 / a2 + dy2 / b2 - 1;
 
         // will be null if only evaluating residuals
@@ -114,8 +186,8 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
                 Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>> jac(jacobians[0]);
                 jac(0, 0) = (-2 * dx) / a2;
                 jac(0, 1) = (-2 * dy) / b2;
-                jac(0, 2) = (-2 * dx2) / (a2 * a);
-                jac(0, 3) = (-2 * dy2) / (b2 * b);
+                jac(0, 2) = (-2 * dx2) / (a2 * ellipse.a());
+                jac(0, 3) = (-2 * dy2) / (b2 * ellipse.b());
             }
         }
 
@@ -142,7 +214,8 @@ public:
 
     ceres::CallbackReturnType operator()(const ceres::IterationSummary &summary)
     {
-        m_output << summary.cost / m_num_observations << "," << m_params[0] << "," << m_params[1] << "," << m_params[2] << "," << m_params[3] << std::endl;
+        Ellipse<double> ellipse(m_params);
+        m_output << summary.cost / m_num_observations << "," << ellipse.h() << "," << ellipse.k() << "," << ellipse.a() << "," << ellipse.b() << std::endl;
         return ceres::CallbackReturnType::SOLVER_CONTINUE;
     }
 
@@ -163,19 +236,15 @@ private:
  *  \return a matrix of points
  */
 Eigen::Matrix2Xd create_dataset(int num_observations,
-                                const double *params,
+                                const Ellipse<double> &ellipse,
                                 double start_angle = -0.5,
                                 double end_angle = 2.0,
                                 double noise_sigma = 0.05)
 {
-    const double h = params[0];
-    const double k = params[1];
-    const double a = params[2];
-    const double b = params[3];
     Eigen::RowVectorXd angles = Eigen::RowVectorXd::LinSpaced(num_observations, start_angle, end_angle);
     Eigen::Matrix2Xd data(2, num_observations);
-    data.row(0) = (a * angles.array().cos()) + h;
-    data.row(1) = (b * angles.array().sin()) + k;
+    data.row(0) = (ellipse.a() * angles.array().cos()) + ellipse.h();
+    data.row(1) = (ellipse.b() * angles.array().sin()) + ellipse.k();
     std::random_device rd{};
     std::mt19937 gen{rd()};
     std::normal_distribution<> d{0, noise_sigma};
@@ -252,13 +321,6 @@ int check_gradients(const Eigen::Matrix2Xd &dataset, double *params, double tole
     return EXIT_SUCCESS;
 }
 
-std::string to_string(const double *params)
-{
-    std::stringstream buff;
-    buff << "(h=" << params[0] << ", k=" << params[1] << ", a=" << params[2] << ", b=" << params[3] << ")";
-    return buff.str();
-}
-
 DEFINE_string(mode, "numeric", "Mode for the program (one of 'numeric', 'autodiff', 'analytic', 'check_grad')");
 DEFINE_int32(num_observations, 100, "Number of observations");
 DEFINE_bool(verbose, false, "Output a verbose summary of the optimization");
@@ -270,10 +332,10 @@ int main(int argc, char **argv)
     gflags::SetUsageMessage("Ceres Example");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-    double initial_params[4] = {0.1, 0.3, 0.9, 1.2};
-    double target_params[4] = {-0.3, 0.5, 4.3, 2.1};
-    double params[4];
-    Eigen::Matrix2Xd dataset = create_dataset(FLAGS_num_observations, target_params);
+    Ellipse<double> initial(0.1, 0.3, 0.9, 1.2);
+    Ellipse<double> target(-0.3, 0.5, 4.3, 2.1);
+    Ellipse<double> ellipse;
+    Eigen::Matrix2Xd dataset = create_dataset(FLAGS_num_observations, target);
 
     if (FLAGS_dump_data)
     {
@@ -286,24 +348,23 @@ int main(int argc, char **argv)
     }
 
     ceres::Problem problem;
-
-    std::copy(initial_params, initial_params + 4, params);
+    ellipse = initial;
 
     if ("autodiff" == FLAGS_mode)
     {
-        setup_autodiff(problem, dataset, params);
+        setup_autodiff(problem, dataset, ellipse.params());
     }
     else if ("numeric" == FLAGS_mode)
     {
-        setup_numeric(problem, dataset, params);
+        setup_numeric(problem, dataset, ellipse.params());
     }
     else if ("analytic" == FLAGS_mode)
     {
-        setup_analytic(problem, dataset, params);
+        setup_analytic(problem, dataset, ellipse.params());
     }
     else if ("check_grad" == FLAGS_mode)
     {
-        return check_gradients(dataset, params, 1e-9);
+        return check_gradients(dataset, ellipse.params(), 1e-9);
     }
     else
     {
@@ -312,8 +373,7 @@ int main(int argc, char **argv)
     }
 
     // we can set upper and lower bounds for all parameters
-    problem.SetParameterLowerBound(params, 2, 1e-5);
-    problem.SetParameterLowerBound(params, 3, 1e-5);
+    ellipse.set_bounds(problem);
 
     // The solver has a wide variety customization options
     ceres::Solver::Options options;
@@ -323,7 +383,7 @@ int main(int argc, char **argv)
 
     // Here we add our own custom callback for logging to a file
     options.update_state_every_iteration = true;
-    std::shared_ptr<CSVCallback> callback = std::make_shared<CSVCallback>(FLAGS_mode + "_fit.csv", params, FLAGS_num_observations);
+    std::shared_ptr<CSVCallback> callback = std::make_shared<CSVCallback>(FLAGS_mode + "_fit.csv", ellipse.params(), FLAGS_num_observations);
     options.callbacks.push_back(callback.get());
 
     ceres::Solver::Summary summary;
@@ -337,9 +397,9 @@ int main(int argc, char **argv)
         std::cout << summary.BriefReport() << std::endl;
     }
 
-    std::cout << "Initial: " << to_string(initial_params) << std::endl
-              << "Final: " << to_string(params) << std::endl
-              << "Target: " << to_string(target_params) << std::endl;
+    std::cout << "Initial: " << initial.to_string() << std::endl
+              << "Final: " << ellipse.to_string() << std::endl
+              << "Target: " << target.to_string() << std::endl;
 
     return 0;
 }
