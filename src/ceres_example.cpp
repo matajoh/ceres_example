@@ -183,7 +183,8 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
             // to avoid unneeded computation
             if (jacobians[0] != nullptr)
             {
-                Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>> jac(jacobians[0]);
+                using jacobian_t = Eigen::Matrix<double, 1, 4, Eigen::RowMajor>;
+                Eigen::Map<jacobian_t> jac(jacobians[0]);
                 jac(0, 0) = (-2 * dx) / a2;
                 jac(0, 1) = (-2 * dy) / b2;
                 jac(0, 2) = (-2 * dx2) / (a2 * ellipse.a());
