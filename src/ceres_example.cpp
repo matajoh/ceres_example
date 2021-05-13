@@ -9,16 +9,21 @@
 #include <ceres/ceres.h>
 #include <glog/logging.h>
 
+/** Sample functor which simply computes the residual.
+ *  Used for numeric differentiation.
+ */
 struct NumericEllipseCostFunctor
 {
     NumericEllipseCostFunctor(const Eigen::Vector2d &observed_point) : observed_point(observed_point) {}
     bool operator()(const double *const parameters, double *residuals) const
     {
+        // extract Ellipse params
         const double h = parameters[0];
         const double k = parameters[1];
         const double a = parameters[2];
         const double b = parameters[3];
 
+        // compute the cost
         double dx = observed_point.x() - h;
         double dy = observed_point.y() - k;
         residuals[0] = (dx * dx) / (a * a) + (dy * dy) / (b * b) - 1;
@@ -28,10 +33,18 @@ struct NumericEllipseCostFunctor
     Eigen::Vector2d observed_point;
 };
 
+/** Slightly more advanced functor which is templated, allowing
+ *  Ceres to automatically compute the Jacobian using
+ *  templates.
+ */
 struct AutoEllipseCostFunctor
 {
     AutoEllipseCostFunctor(const Eigen::Vector2d &observed_point) : observed_point(observed_point) {}
 
+    /** Ceres will create a version of this with a special
+     *  autodiff type for determining the Jacobian
+     *  and another with doubles for residual computation
+     */
     template <typename T>
     bool operator()(const T *const parameters, T *residuals) const
     {
@@ -51,10 +64,29 @@ struct AutoEllipseCostFunctor
     Eigen::Vector2d observed_point;
 };
 
+/** If the analytic gradient is simple to compute or if perfomance is a concern,
+ *  it can be best to compute the Jacobians by hand, as shown here. The template
+ *  arguments indicate to Ceres the number of residuals, and the number of
+ *  parameters. This can also be determined dynamically using the base
+ *  class `CostFunction`.
+ */
 struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
 {
     AnalyticEllipseCostFunction(const Eigen::Vector2d &observed_point) : observed_point(observed_point) {}
     virtual ~AnalyticEllipseCostFunction() {}
+
+    /** This function performs double duty: it both computes the residuals and,
+     *  at other times, will also compute the Jacobians. This is communicated
+     *  via potential `nullptr` values in `jacobians`. While somewhat awkward,
+     *  this allows for re-use of sub-expressions for increased efficiency.
+     *  The sizes of the arrays are indicated via the template argument
+     *  above.
+     *
+     *  \param parameters an array of parameter arrays
+     *  \param residuals an array of residuals values
+     *  \param jacobians an array of Jacobian matrices. Each matrix is in row-major order.
+     *  \return whether the evaluation was successful
+     */
     virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
     {
         const double h = parameters[0][0];
@@ -62,6 +94,7 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
         const double a = parameters[0][2];
         const double b = parameters[0][3];
 
+        // We can re-use all of these later
         const double dx = observed_point.x() - h;
         const double dy = observed_point.y() - k;
         const double dx2 = dx * dx;
@@ -70,13 +103,20 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
         const double b2 = b * b;
         residuals[0] = dx2 / a2 + dy2 / b2 - 1;
 
-        // Compute the Jacobian if asked for.
-        if (jacobians != nullptr && jacobians[0] != nullptr)
+        // will be null if only evaluating residuals
+        if (jacobians != nullptr)
         {
-            jacobians[0][0] = (-2 * dx) / a2;
-            jacobians[0][1] = (-2 * dy) / b2;
-            jacobians[0][2] = (-2 * dx2) / (a2 * a);
-            jacobians[0][3] = (-2 * dy2) / (b2 * b);
+            // if some parameters are being held constant,
+            // then individual Jacobian matrices will also be null
+            // to avoid unneeded computation
+            if (jacobians[0] != nullptr)
+            {
+                Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>> jac(jacobians[0]);
+                jac(0, 0) = (-2 * dx) / a2;
+                jac(0, 1) = (-2 * dy) / b2;
+                jac(0, 2) = (-2 * dx2) / (a2 * a);
+                jac(0, 3) = (-2 * dy2) / (b2 * b);
+            }
         }
 
         return true;
@@ -85,10 +125,14 @@ struct AnalyticEllipseCostFunction : public ceres::SizedCostFunction<1, 4>
     Eigen::Vector2d observed_point;
 };
 
+/** We can inject our own code into the optimization process to do
+ *  custom logging and the like. This class writes intermediate values
+ *  to a CSV file.
+ */
 class CSVCallback : public ceres::IterationCallback
 {
 public:
-    explicit CSVCallback(const std::string& path, const double *params, int num_observations)
+    explicit CSVCallback(const std::string &path, const double *params, int num_observations)
         : m_params(params), m_num_observations(num_observations), m_output(path)
     {
         m_output << "Cost,h,k,a,b" << std::endl;
@@ -108,19 +152,33 @@ private:
     std::ofstream m_output;
 };
 
-Eigen::Matrix2Xd create_dataset(int num_observations, const double *params)
+/** Creates a dataset consisting of noisy samples from an arc of an
+ *  axis-aligned ellipse.
+ * 
+ *  \param num_observations the number of observations to sample
+ *  \param params the ellipse parameters
+ *  \param start_angle the starting angle of the arc in radians
+ *  \param end_angle the ending angle of the arc in radians
+ *  \param noise_sigma the sigma of the Gaussian used for noise
+ *  \return a matrix of points
+ */
+Eigen::Matrix2Xd create_dataset(int num_observations,
+                                const double *params,
+                                double start_angle = -0.5,
+                                double end_angle = 2.0,
+                                double noise_sigma = 0.05)
 {
     const double h = params[0];
     const double k = params[1];
     const double a = params[2];
     const double b = params[3];
-    Eigen::RowVectorXd angles = Eigen::RowVectorXd::LinSpaced(num_observations, -0.5, 2);
+    Eigen::RowVectorXd angles = Eigen::RowVectorXd::LinSpaced(num_observations, start_angle, end_angle);
     Eigen::Matrix2Xd data(2, num_observations);
     data.row(0) = (a * angles.array().cos()) + h;
     data.row(1) = (b * angles.array().sin()) + k;
     std::random_device rd{};
     std::mt19937 gen{rd()};
-    std::normal_distribution<> d{0, 0.05};
+    std::normal_distribution<> d{0, noise_sigma};
     for (auto i = 0; i < data.cols(); ++i)
     {
         data(0, i) += d(gen);
@@ -130,6 +188,7 @@ Eigen::Matrix2Xd create_dataset(int num_observations, const double *params)
     return data;
 }
 
+// Setup the problem using numeric differentiation.
 void setup_numeric(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, double *params)
 {
     std::cout << "Numeric differentiation: " << std::endl;
@@ -142,6 +201,7 @@ void setup_numeric(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, dou
     }
 }
 
+// Setup the problem using automatic differentiation.
 void setup_autodiff(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, double *params)
 {
     std::cout << "Automatic differentiation: " << std::endl;
@@ -154,6 +214,7 @@ void setup_autodiff(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, do
     }
 }
 
+// Setup the problem using analytic differentiation.
 void setup_analytic(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, double *params)
 {
     std::cout << "Analytic differentiation: " << std::endl;
@@ -164,15 +225,21 @@ void setup_analytic(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, do
     }
 }
 
+// Perform a gradient check
 int check_gradients(const Eigen::Matrix2Xd &dataset, double *params, double tolerance)
 {
+    // First we create an instance of the cost function we want to check
     Eigen::Vector2d observed_point = dataset.col(0);
     auto cost_function = std::make_shared<AnalyticEllipseCostFunction>(observed_point);
-    ceres::NumericDiffOptions numeric_diff_options;
 
     const double *parameters[] = {params};
 
+    // We can use this object to customise the checking process
+    ceres::NumericDiffOptions numeric_diff_options;
     ceres::GradientChecker gradient_checker(cost_function.get(), nullptr, numeric_diff_options);
+
+    // We perform a probe. If unsuccessful, we can view the erroneous
+    // gradients by writing the error log to the console
     ceres::GradientChecker::ProbeResults results;
     if (!gradient_checker.Probe(parameters, tolerance, &results))
     {
@@ -208,11 +275,11 @@ int main(int argc, char **argv)
     double params[4];
     Eigen::Matrix2Xd dataset = create_dataset(FLAGS_num_observations, target_params);
 
-    if(FLAGS_dump_data)
+    if (FLAGS_dump_data)
     {
         std::ofstream output(FLAGS_mode + "_data.csv");
         output << "x,y" << std::endl;
-        for(auto i=0; i<dataset.cols(); ++i)
+        for (auto i = 0; i < dataset.cols(); ++i)
         {
             output << dataset(0, i) << "," << dataset(1, i) << std::endl;
         }
@@ -244,11 +311,18 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // we can set upper and lower bounds for all parameters
+    problem.SetParameterLowerBound(params, 2, 1e-5);
+    problem.SetParameterLowerBound(params, 3, 1e-5);
+
+    // The solver has a wide variety customization options
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
     options.minimizer_progress_to_stdout = true;
-    options.update_state_every_iteration = true;
     options.num_threads = 8;
+
+    // Here we add our own custom callback for logging to a file
+    options.update_state_every_iteration = true;
     std::shared_ptr<CSVCallback> callback = std::make_shared<CSVCallback>(FLAGS_mode + "_fit.csv", params, FLAGS_num_observations);
     options.callbacks.push_back(callback.get());
 
