@@ -46,7 +46,7 @@ Target: (h=-0.3, k=0.5, a=4.3, b=2.1)
 This repository shows how to use Ceres via the example of fitting an ellipse to a noisy arc of points, as seen
 below:
 
-![Ellipse fitting animation](docs/fit_ellipse_wide.gif)
+![Ellipse fitting animation](assets/fit_ellipse_wide.gif)
 
 In [`ceres_example.cpp`](ceres_example.cpp) you can view examples of:
 
