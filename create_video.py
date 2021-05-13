@@ -1,3 +1,5 @@
+""" Script to create a video showing the system as it fits to data """
+
 import argparse
 from collections import namedtuple
 import csv
@@ -11,8 +13,10 @@ import numpy as np
 def _parse_args():
     parser = argparse.ArgumentParser("Fit Video")
     parser.add_argument("fit_path", help="Path to the fit CSV file")
-    parser.add_argument("data_path", help="Path to the data CSV file")
-    parser.add_argument("mp4_path", help="Path to the output MP4 file")
+    parser.add_argument("data_path", help="Path to the data CSV file (created from -dump_data)")
+    parser.add_argument("--mp4_path", help="Path to the output MP4 file")
+    parser.add_argument("--landscape", action="store_true",
+                        help="Whether to create a landscape video")
     return parser.parse_args()
 
 
@@ -46,17 +50,23 @@ def _main():
                                     float(line["b"])))
 
     steps = np.arange(len(cost))
-    fig = plt.figure(figsize=(4, 8))
-    ax = plt.subplot(211)
-    ax.set_xlabel("Cost")
-    ax.set_ylabel("Step")
-    line, = ax.plot(steps, cost, 'r-')
-    ax = plt.subplot(212)
-    ax.set_xlim(-3, 5)
-    ax.set_ylim(-3, 5)
-    ax.scatter(data[::4, 0], data[::4, 1], marker='.')
+    if args.landscape:
+        fig = plt.figure(figsize=(8, 4))
+        cost_ax = plt.subplot(121)
+        fit_ax = plt.subplot(122)
+    else:
+        fig = plt.figure(figsize=(4, 8))
+        cost_ax = plt.subplot(211)
+        fit_ax = plt.subplot(212)
+
+    cost_ax.set_xlabel("Cost")
+    cost_ax.set_ylabel("Step")
+    line, = cost_ax.plot(steps, cost, 'r-')
+    fit_ax.set_xlim(-3, 5)
+    fit_ax.set_ylim(-3, 5)
+    fit_ax.scatter(data[::4, 0], data[::4, 1], marker='.')
     ellipse = ellipses[0].to_patch()
-    ax.add_patch(ellipse)
+    fit_ax.add_patch(ellipse)
 
     def init():
         line.set_data([], [])
@@ -71,7 +81,10 @@ def _main():
 
     anim = FuncAnimation(fig, animate, init_func=init,
                               frames=len(cost), interval=100, blit=True)
-    anim.save(args.mp4_path, fps=12, extra_args=['-vcodec', 'libx264'])
+
+    if args.mp4_path:
+        anim.save(args.mp4_path, fps=12, extra_args=['-vcodec', 'libx264'])
+
     plt.show()
 
 
