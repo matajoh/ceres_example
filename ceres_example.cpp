@@ -8,7 +8,6 @@
 #include <Eigen/Core>
 #include <gflags/gflags.h>
 #include <ceres/ceres.h>
-#include <glog/logging.h>
 
 
 template<typename T>
@@ -334,7 +333,6 @@ DEFINE_bool(dump_data, false, "Whether to dump the data to a csv");
 
 int main(int argc, char **argv)
 {
-    google::InitGoogleLogging(argv[0]);
     gflags::SetUsageMessage("Ceres Example");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
