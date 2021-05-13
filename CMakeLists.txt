@@ -13,15 +13,10 @@ FetchContent_Declare(gflags
   GIT_TAG        v2.2.2
 )
 
-FetchContent_GetProperties(gflags)
-if (NOT gflags_POPULATED)
-    FetchContent_Populate(gflags)
-endif ()
-
+FetchContent_MakeAvailable(gflags)
 set(gflags_DIR ${gflags_BINARY_DIR})
-add_subdirectory(${gflags_SOURCE_DIR})
 
-find_package(LAPACK COMPONENTS MKL REQUIRED)
+find_package(LAPACK COMPONENTS MKL OPTIONAL)
 
 FetchContent_Declare(eigen
   GIT_REPOSITORY https://gitlab.com/libeigen/eigen
