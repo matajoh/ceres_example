@@ -262,11 +262,14 @@ Eigen::Matrix2Xd create_dataset(int num_observations,
 void setup_numeric(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, double *params)
 {
     std::cout << "Numeric differentiation: " << std::endl;
+    using cost_t = ceres::NumericDiffCostFunction<NumericEllipseCostFunctor,
+                                                  ceres::CENTRAL, // method to use
+                                                  1,              // # residuals
+                                                  4>;             // # params
     for (auto i = 0; i < dataset.cols(); ++i)
     {
         ceres::CostFunction *cost_function =
-            new ceres::NumericDiffCostFunction<NumericEllipseCostFunctor, ceres::CENTRAL, 1, 4>(
-                new NumericEllipseCostFunctor(dataset.col(i)));
+            new cost_t(new NumericEllipseCostFunctor(dataset.col(i)));
         problem.AddResidualBlock(cost_function, nullptr, params);
     }
 }
@@ -275,11 +278,13 @@ void setup_numeric(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, dou
 void setup_autodiff(ceres::Problem &problem, const Eigen::Matrix2Xd &dataset, double *params)
 {
     std::cout << "Automatic differentiation: " << std::endl;
+    using cost_t = ceres::AutoDiffCostFunction<AutoEllipseCostFunctor,
+                                               1,   // # residuals
+                                               4>;  // # params
     for (auto i = 0; i < dataset.cols(); ++i)
     {
         ceres::CostFunction *cost_function =
-            new ceres::AutoDiffCostFunction<AutoEllipseCostFunctor, 1, 4>(
-                new AutoEllipseCostFunctor(dataset.col(i)));
+            new cost_t(new AutoEllipseCostFunctor(dataset.col(i)));
         problem.AddResidualBlock(cost_function, nullptr, params);
     }
 }
